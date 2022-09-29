@@ -3,6 +3,8 @@ import logging
 from enum import Enum
 
 import voluptuous as vol
+from homeassistant.core import callback
+
 from homeassistant.components.light import (
     LightEntity,
     SUPPORT_BRIGHTNESS,
@@ -74,13 +76,6 @@ class NatureRemoLight(NatureRemoBase, LightEntity):
 
     # Entity methods
 
-    @property
-    def assumed_state(self):
-        """Return True if unable to access real state of the entity."""
-        # Remo does return light.state however it doesn't seem to be correct
-        # in my experience.
-        return True
-
     # ToggleEntity methods
 
     @property
@@ -119,8 +114,34 @@ class NatureRemoLight(NatureRemoBase, LightEntity):
 
     # own methods
 
+    async def async_added_to_hass(self):
+        """Subscribe to updates."""
+        self.async_on_remove(
+            self._coordinator.async_add_listener(self._update_callback)
+        )
+
+    async def async_update(self):
+        """Update the entity.
+
+        Only used by the generic entity update service.
+        """
+        await self._coordinator.async_request_refresh()
+
+    def _update(self, light):
+        self._is_on = light["power"] == "on"
+        self._is_night = light["last_button"] == "night"
+
+    @callback
+    def _update_callback(self):
+        self._update(
+            self._coordinator.data["appliances"][self._appliance_id]["light"]["state"]
+        )
+        self.async_write_ha_state()
+
     async def _post(self, data):
-        await self._api.post(f"/appliances/{self._appliance_id}/light", data)
+        response = await self._api.post(f"/appliances/{self._appliance_id}/light", data)
+        self._update(response)
+        self.async_write_ha_state()
 
     def _set_on(self, is_on, is_night = False):
         self._is_on = is_on
